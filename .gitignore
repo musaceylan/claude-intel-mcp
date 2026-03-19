@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+*.env
+*.db
+*.db-journal
+*.log
+.claude-intel/
+backups/
+coverage/
+.DS_Store
