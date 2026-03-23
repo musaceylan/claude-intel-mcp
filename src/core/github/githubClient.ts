@@ -66,6 +66,7 @@ export interface GithubContributor {
 
 const MAX_RETRIES = 3;
 const BASE_BACKOFF_MS = 1000;
+const FETCH_TIMEOUT_MS = 30_000;
 
 async function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -133,9 +134,13 @@ export class GithubClient {
 
     let response: Response;
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
     try {
-      response = await fetch(url, { headers: this.buildHeaders() });
+      response = await fetch(url, { headers: this.buildHeaders(), signal: controller.signal });
     } catch (err) {
+      clearTimeout(timeoutId);
       if (attempt < MAX_RETRIES) {
         const backoff = BASE_BACKOFF_MS * Math.pow(2, attempt);
         logger.warn(`Network error fetching ${url}, retry ${attempt + 1}/${MAX_RETRIES}`, {
@@ -148,6 +153,7 @@ export class GithubClient {
       throw new Error(`Failed to fetch ${url} after ${MAX_RETRIES} retries: ${String(err)}`);
     }
 
+    clearTimeout(timeoutId);
     this.updateRateLimit(response.headers);
 
     if (response.status === 429 || response.status === 403) {
@@ -172,7 +178,11 @@ export class GithubClient {
       throw new Error(`GitHub API error ${response.status} for ${url}: ${body}`);
     }
 
-    return response.json() as Promise<T>;
+    try {
+      return (await response.json()) as T;
+    } catch (err) {
+      throw new Error(`Failed to parse JSON response from ${url}: ${String(err)}`);
+    }
   }
 
   async searchRepos(

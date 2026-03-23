@@ -93,8 +93,12 @@ export async function scanTrends(input: ScanTrendsInput): Promise<ScanTrendsOutp
       })
     );
 
-    const results = await Promise.all(tasks);
-    readmeMap = new Map(results.map((r) => [r.name, r.readme]));
+    const results = await Promise.allSettled(tasks);
+    readmeMap = new Map(
+      results
+        .filter((r): r is PromiseFulfilledResult<{ name: string; readme: string }> => r.status === "fulfilled")
+        .map((r) => [r.value.name, r.value.readme])
+    );
   }
 
   // Classify

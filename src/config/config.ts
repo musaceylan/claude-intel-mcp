@@ -1,6 +1,6 @@
 import { homedir } from "os";
 import { join, resolve } from "path";
-import { existsSync, mkdirSync } from "fs";
+import { mkdirSync } from "fs";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -30,10 +30,18 @@ function resolveDataDir(): string {
 }
 
 function ensureDir(dir: string): string {
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
+  mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function parseIntSafe(raw: string | undefined, fallback: number): number {
+  const parsed = parseInt(raw ?? String(fallback), 10);
+  return isNaN(parsed) ? fallback : parsed;
+}
+
+function parseFloatSafe(raw: string | undefined, fallback: number): number {
+  const parsed = parseFloat(raw ?? String(fallback));
+  return isNaN(parsed) ? fallback : parsed;
 }
 
 function parseLogLevel(raw: string | undefined): LogLevel {
@@ -53,9 +61,9 @@ function buildConfig(): Config {
   return {
     githubToken: process.env["GITHUB_TOKEN"],
     githubApiBase: process.env["GITHUB_API_BASE"] ?? "https://api.github.com",
-    maxReposPerScan: parseInt(process.env["MAX_REPOS_PER_SCAN"] ?? "50", 10),
-    scanIntervalHours: parseInt(process.env["SCAN_INTERVAL_HOURS"] ?? "24", 10),
-    minRelevanceScore: parseFloat(process.env["MIN_RELEVANCE_SCORE"] ?? "0.6"),
+    maxReposPerScan: parseIntSafe(process.env["MAX_REPOS_PER_SCAN"], 50),
+    scanIntervalHours: parseIntSafe(process.env["SCAN_INTERVAL_HOURS"], 24),
+    minRelevanceScore: parseFloatSafe(process.env["MIN_RELEVANCE_SCORE"], 0.6),
     localRepoPath,
     dataDir,
     claudeMdPath: join(localRepoPath, "CLAUDE.md"),
