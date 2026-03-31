@@ -187,13 +187,15 @@ export function generateSuggestions(
     if (macro) all.push(macro);
   }
 
-  // Deduplicate by title
-  const seen = new Set<string>();
-  const deduped = all.filter((s) => {
-    if (seen.has(s.title)) return false;
-    seen.add(s.title);
-    return true;
-  });
+  // Deduplicate by title — keep the highest-scoring suggestion per title
+  const bestByTitle = new Map<string, Suggestion>();
+  for (const s of all) {
+    const existing = bestByTitle.get(s.title);
+    if (!existing || s.confidence * s.estimatedImpact > existing.confidence * existing.estimatedImpact) {
+      bestByTitle.set(s.title, s);
+    }
+  }
+  const deduped = Array.from(bestByTitle.values());
 
   // Link related
   const linked = linkRelatedSuggestions(deduped);

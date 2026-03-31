@@ -8,6 +8,7 @@ const logger = createLogger("githubCollector");
 export interface CollectedRepo extends GithubRepo {
   collectedAt: string;
   searchQuery: string;
+  queryMatchCount: number; // How many distinct queries returned this repo
 }
 
 const SEARCH_QUERIES = [
@@ -34,9 +35,15 @@ function deduplicateRepos(repos: CollectedRepo[]): CollectedRepo[] {
 
   for (const repo of repos) {
     const existing = seen.get(repo.full_name);
-    // Keep highest-star version if duplicated across queries
-    if (!existing || repo.stargazers_count > existing.stargazers_count) {
-      seen.set(repo.full_name, repo);
+    if (!existing) {
+      seen.set(repo.full_name, { ...repo, queryMatchCount: 1 });
+    } else {
+      // Accumulate query match count — multi-query hits are a strong relevance signal
+      seen.set(repo.full_name, {
+        ...existing,
+        queryMatchCount: existing.queryMatchCount + 1,
+        stargazers_count: Math.max(existing.stargazers_count, repo.stargazers_count),
+      });
     }
   }
 
@@ -77,7 +84,7 @@ export class GithubCollector {
 
           const filtered = result.items
             .filter(passesFilter)
-            .map((repo) => ({ ...repo, collectedAt, searchQuery: query }));
+            .map((repo) => ({ ...repo, collectedAt, searchQuery: query, queryMatchCount: 1 }));
 
           logger.debug("Query done", {
             query,

@@ -44,6 +44,8 @@ import { GithubClient } from "../core/github/githubClient.js";
 import { GithubCollector } from "../core/github/githubCollector.js";
 import { classifyBatch } from "../core/analysis/repoClassifier.js";
 import { scoreBatch } from "../core/analysis/relevanceScorer.js";
+import { storePattern, markProcessed } from "../core/analysis/patternMemory.js";
+import { recordEvent } from "../core/audit/learningLog.js";
 
 const logger = createLogger("mcp:server");
 
@@ -369,7 +371,10 @@ export async function createMcpServer(): Promise<Server> {
           const collector = new GithubCollector(client);
           const collected = await collector.collect();
           const classified = classifyBatch(collected);
-          const scored = scoreBatch(classified);
+
+          // Pass per-repo query match counts so multi-query hits get a relevance boost
+          const queryCountMap = new Map(collected.map((r) => [r.full_name, r.queryMatchCount]));
+          const scored = scoreBatch(classified, new Map(), queryCountMap);
           const topScored = scored.slice(0, parsed.maxRepos);
 
           const dna = profileLocalRepo(parsed.localPath);
@@ -387,7 +392,23 @@ export async function createMcpServer(): Promise<Server> {
                     client.getFileContents(owner!, repoName!, "package.json"),
                   ]);
                   const patterns = extractPatterns({ readme, claudeMd, packageJson });
-                  comparisons.push(compareWithLocal(patterns, dna, repo.repo.full_name));
+                  const comparison = compareWithLocal(patterns, dna, repo.repo.full_name);
+                  comparisons.push(comparison);
+
+                  // Persist patterns and record audit event
+                  for (const pattern of patterns) {
+                    storePattern(pattern, repo.repo.full_name);
+                  }
+                  markProcessed(repo.repo.full_name);
+                  recordEvent({
+                    timestamp: new Date().toISOString(),
+                    event_type: "compare",
+                    repo_full_name: repo.repo.full_name,
+                    patterns_found: patterns.length,
+                    score: comparison.overallFitScore,
+                    applied: false,
+                    notes: `${comparison.gaps.length} gaps, ${comparison.enhancements.length} enhancements, ${comparison.conflicts.length} conflicts`,
+                  });
                 } catch {
                   // skip repos that fail to fetch
                 }

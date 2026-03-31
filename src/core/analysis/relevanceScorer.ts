@@ -202,7 +202,8 @@ function calculatePenalties(
 
 export function scoreRepo(
   classified: ClassifiedRepo,
-  readme = ""
+  readme = "",
+  queryMatchCount = 1
 ): ScoredRepo {
   const { repo, category, signals } = classified;
 
@@ -220,7 +221,11 @@ export function scoreRepo(
     recency * W_RECENCY +
     quality * W_QUALITY;
 
-  const finalScore = clamp(rawScore - penaltyTotal);
+  // Repos appearing in multiple search queries are a strong relevance signal.
+  // Bonus caps at 0.10 for repos matching 10+ distinct queries.
+  const queryFreqBonus = queryMatchCount > 1 ? clamp((queryMatchCount - 1) / 9) * 0.10 : 0;
+
+  const finalScore = clamp(rawScore - penaltyTotal + queryFreqBonus);
 
   const breakdown: RelevanceBreakdown = {
     github_signal: Math.round(github_signal * 1000) / 1000,
@@ -243,9 +248,17 @@ export function scoreRepo(
   };
 }
 
-export function scoreBatch(repos: ClassifiedRepo[], readmeMap: Map<string, string> = new Map()): ScoredRepo[] {
+export function scoreBatch(
+  repos: ClassifiedRepo[],
+  readmeMap: Map<string, string> = new Map(),
+  queryCountMap: Map<string, number> = new Map()
+): ScoredRepo[] {
   const scored = repos.map((classified) =>
-    scoreRepo(classified, readmeMap.get(classified.repo.full_name) ?? "")
+    scoreRepo(
+      classified,
+      readmeMap.get(classified.repo.full_name) ?? "",
+      queryCountMap.get(classified.repo.full_name) ?? 1
+    )
   );
 
   return scored.sort((a, b) => b.score - a.score);
