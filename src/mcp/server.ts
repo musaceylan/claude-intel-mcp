@@ -33,12 +33,17 @@ import {
 import { buildRewriteClaudePrompt, RewriteClaudeInputSchema } from "./prompts/rewriteClaude.js";
 import { buildSummarizePrompt, SummarizeInputSchema } from "./prompts/summarize.js";
 
+import pLimit from "p-limit";
 import { createLogger } from "../core/audit/logger.js";
 import { generateSuggestions } from "../core/engine/suggestionEngine.js";
 import { createUpdatePlan } from "../core/engine/updatePlanner.js";
 import { profileLocalRepo } from "../core/analysis/dnaProfiler.js";
 import { compareWithLocal } from "../core/analysis/comparator.js";
 import { extractPatterns } from "../core/analysis/patternExtractor.js";
+import { GithubClient } from "../core/github/githubClient.js";
+import { GithubCollector } from "../core/github/githubCollector.js";
+import { classifyBatch } from "../core/analysis/repoClassifier.js";
+import { scoreBatch } from "../core/analysis/relevanceScorer.js";
 
 const logger = createLogger("mcp:server");
 
@@ -360,12 +365,6 @@ export async function createMcpServer(): Promise<Server> {
             })
             .parse(args ?? {});
 
-          // Run mini-scan pipeline
-          const { GithubCollector } = await import("../core/github/githubCollector.js");
-          const { classifyBatch } = await import("../core/analysis/repoClassifier.js");
-          const { scoreBatch } = await import("../core/analysis/relevanceScorer.js");
-          const { GithubClient } = await import("../core/github/githubClient.js");
-
           const client = new GithubClient();
           const collector = new GithubCollector(client);
           const collected = await collector.collect();
@@ -374,21 +373,27 @@ export async function createMcpServer(): Promise<Server> {
           const topScored = scored.slice(0, parsed.maxRepos);
 
           const dna = profileLocalRepo(parsed.localPath);
-          const comparisons = [];
+          const comparisons: ReturnType<typeof compareWithLocal>[] = [];
+          const fetchLimit = pLimit(3);
 
-          for (const repo of topScored.slice(0, 5)) {
-            try {
-              // Extract patterns from available data (no full file fetch in this flow)
-              const patterns = extractPatterns({
-                readme: "",
-                claudeMd: "",
-              });
-              const comparison = compareWithLocal(patterns, dna, repo.repo.full_name);
-              comparisons.push(comparison);
-            } catch {
-              // skip
-            }
-          }
+          await Promise.all(
+            topScored.slice(0, 5).map((repo) =>
+              fetchLimit(async () => {
+                try {
+                  const [owner, repoName] = repo.repo.full_name.split("/");
+                  const [readme, claudeMd, packageJson] = await Promise.all([
+                    client.getReadme(owner!, repoName!),
+                    client.getFileContents(owner!, repoName!, "CLAUDE.md"),
+                    client.getFileContents(owner!, repoName!, "package.json"),
+                  ]);
+                  const patterns = extractPatterns({ readme, claudeMd, packageJson });
+                  comparisons.push(compareWithLocal(patterns, dna, repo.repo.full_name));
+                } catch {
+                  // skip repos that fail to fetch
+                }
+              })
+            )
+          );
 
           const suggestions = generateSuggestions(comparisons, topScored);
           return {

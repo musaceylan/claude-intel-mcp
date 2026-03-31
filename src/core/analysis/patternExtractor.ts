@@ -31,7 +31,6 @@ export interface FileContents {
 
 // ------- CLAUDE.md Section Extraction -------
 
-const HEADING_REGEX = /^#{1,3}\s+(.+)$/gm;
 const SECTION_MIN_LENGTH = 50;
 
 function extractClaudeMdSections(content: string): ExtractedPattern[] {
